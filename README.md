@@ -42,12 +42,12 @@ python dependgen.py <repository_url> [branch]
 ### Example
 For a GitHub repository:
 ```bash
-python dependgen.py https://github.com/example-org/example-repo main
+python dependgen.py https://github.com/kanopi/saplings
 ```
 
 For a Drupal repository:
 ```bash
-python dependgen.py https://git.drupalcode.org/project/example-repo
+python dependgen.py https://git.drupalcode.org/project/seo_checklist 5.2.x
 ```
 
 ## Output
@@ -85,3 +85,6 @@ Feel free to open issues or submit pull requests to improve the script. Contribu
 ## License
 This script is available under the GNU General Public License v3.0. See the LICENSE file for details.
 
+---
+
+Made with :heart: on Cape Cod.

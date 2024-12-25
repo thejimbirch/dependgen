@@ -137,6 +137,10 @@ def generate_combined_markdown(repo_name, mermaid_chart, all_dependencies):
                 link = f"https://packagist.org/packages/{dependency}"
             lines.append(f"- [{dependency}]({link})\n")
 
+    # Add generated-by text at the bottom
+    lines.append("---\n")
+    lines.append("Generated using [thejimbirch/dependgen](https://github.com/thejimbirch/dependgen).\n")
+    
     return "\n".join(lines).strip() + "\n"
 
 if __name__ == "__main__":
