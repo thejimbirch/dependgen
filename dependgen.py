@@ -14,14 +14,14 @@ def fetch_composer_json(repo_url, branch, platform="github"):
         raw_url = repo_url + f"/-/raw/{branch}/composer.json"
     else:
         print(f"Unsupported platform for {repo_url}")
-        sys.exit(1)  # Stop execution
+        sys.exit(1)
 
     response = requests.get(raw_url)
     if response.status_code == 200:
         return response.json()
     else:
         print(f"Failed to fetch composer.json from {repo_url} on branch {branch}")
-        sys.exit(1)  # Stop execution
+        sys.exit(1)
 
 def get_default_branch(repo_url, platform="github"):
     """
@@ -37,23 +37,20 @@ def get_default_branch(repo_url, platform="github"):
         api_url = api_url.replace("/", "%2F", 1) + "/repository"
     else:
         print(f"Unsupported platform for {repo_url}")
-        sys.exit(1)  # Stop execution
+        sys.exit(1)
 
     try:
         response = requests.get(api_url)
         response.raise_for_status()
         data = response.json()
-        if platform == "github":
-            return data.get("default_branch", "main")
-        elif platform == "gitlab" or platform == "drupalcode":
-            return data.get("default_branch", "main")
+        return data.get("default_branch", "main")
     except requests.RequestException as e:
         print(f"Failed to fetch default branch for {repo_url}: {e}")
-        sys.exit(1)  # Stop execution
+        sys.exit(1)
 
 def parse_dependencies(repo_name, repo_url, branch, all_dependencies, visited, platform="github"):
     """
-    Parse the dependencies from a composer.json file and add them to the mermaid.js chart.
+    Parse the dependencies from a composer.json file and add them to the dependency list.
     """
     if repo_url in visited:
         return  # Avoid reprocessing the same repository
@@ -61,50 +58,42 @@ def parse_dependencies(repo_name, repo_url, branch, all_dependencies, visited, p
 
     composer_data = fetch_composer_json(repo_url, branch, platform)
     if not composer_data:
-        sys.exit(1)  # Stop execution if composer.json is missing
+        sys.exit(1)
 
     dependencies = composer_data.get("require", {})
     type_field = composer_data.get("type", "unknown")
 
-    # Add the current repo to the dependencies list with its type
+    # Add the current repo to the dependencies list with type and versions
     all_dependencies[repo_name] = {
         "type": type_field,
-        "dependencies": dependencies.keys()
+        "dependencies": dependencies.copy()  # Only store direct dependencies
     }
 
-    # Recursively fetch dependencies
-    for dependency in dependencies.keys():
-        if "kanopi" in dependency:  # Assume only `kanopi` packages are on GitHub
-            dep_repo_url = urljoin("https://github.com/", dependency.replace("/", "/"))
-            dep_branch = get_default_branch(dep_repo_url, "github")  # Get the default branch for the dependent repo
-            parse_dependencies(dependency, dep_repo_url, dep_branch, all_dependencies, visited, "github")
-        elif "gitlab" in dependency:
-            dep_repo_url = urljoin("https://gitlab.com/", dependency.replace("/", "/"))
-            dep_branch = get_default_branch(dep_repo_url, "gitlab")  # Get the default branch for the dependent repo
-            parse_dependencies(dependency, dep_repo_url, dep_branch, all_dependencies, visited, "gitlab")
-        elif "git.drupalcode.org" in dependency:
-            dep_repo_url = urljoin("https://git.drupalcode.org/", dependency.replace("/", "/"))
-            dep_branch = get_default_branch(dep_repo_url, "drupalcode")  # Get the default branch for the dependent repo
-            parse_dependencies(dependency, dep_repo_url, dep_branch, all_dependencies, visited, "drupalcode")
+    # Recursively fetch dependencies without merging dependencies of dependencies
+    for dependency, version in dependencies.items():
+        if dependency not in visited:
+            if "kanopi" in dependency:
+                dep_repo_url = urljoin("https://github.com/", dependency.replace("/", "/"))
+                dep_branch = get_default_branch(dep_repo_url, "github")
+                parse_dependencies(dependency, dep_repo_url, dep_branch, all_dependencies, visited, "github")
+            elif "gitlab" in dependency:
+                dep_repo_url = urljoin("https://gitlab.com/", dependency.replace("/", "/"))
+                dep_branch = get_default_branch(dep_repo_url, "gitlab")
+                parse_dependencies(dependency, dep_repo_url, dep_branch, all_dependencies, visited, "gitlab")
+            elif "git.drupalcode.org" in dependency:
+                dep_repo_url = urljoin("https://git.drupalcode.org/", dependency.replace("/", "/"))
+                dep_branch = get_default_branch(dep_repo_url, "drupalcode")
+                parse_dependencies(dependency, dep_repo_url, dep_branch, all_dependencies, visited, "drupalcode")
 
 def generate_mermaid_chart(all_dependencies):
     """
-    Generate a mermaid.js chart from the dependencies, structured to be more vertical than wide.
+    Generate a mermaid.js chart from the dependencies.
     """
-    node_shapes = {
-        "drupal-recipe": "(({}))",
-        "drupal-module": "([{}])",
-        "drupal-theme": "({})",
-        "unknown": "[{}]"
-    }
-
-    lines = ["graph TB"]  # Use TB (Top to Bottom) for a vertical layout
+    lines = ["graph LR"]
 
     for repo, data in all_dependencies.items():
-        shape = node_shapes.get(data["type"], "[{}]").format(repo)
-        lines.append(f'    {repo}{shape}')
-        for dependency in data["dependencies"]:
-            lines.append(f'    {repo} --> {dependency}')
+        for dependency, version in data["dependencies"].items():
+            lines.append(f'    {repo} -->|"{version}"| {dependency}')
 
     return "\n".join(lines)
 
@@ -120,27 +109,21 @@ def generate_combined_markdown(repo_name, mermaid_chart, all_dependencies):
     lines.append(mermaid_chart)
     lines.append("```")
 
-    # Add dependency list
+    # Add dependency list with version constraints
     lines.append("## Dependency List\n")
     for repo, data in all_dependencies.items():
         lines.append(f"### {repo}\n")
         lines.append(f"- Type: {data['type']}\n")
         lines.append("#### Dependencies:\n")
-        for dependency in data["dependencies"]:
-            if dependency.startswith("drupal/"):
-                dependency_name = dependency.split("/")[-1]
-                link = f"https://www.drupal.org/project/{dependency_name}"
-            elif dependency.startswith("bower-asset/") or dependency.startswith("npm-asset/"):
-                dependency_name = dependency.split("/")[-1]
-                link = f"https://asset-packagist.org/package/{dependency.replace('bower-asset/', 'bower-asset/').replace('npm-asset/', 'npm-asset/')}"
-            else:
-                link = f"https://packagist.org/packages/{dependency}"
-            lines.append(f"- [{dependency}]({link})\n")
+        for dependency, version in data["dependencies"].items():
+            link = f"https://packagist.org/packages/{dependency}"
+            lines.append(f"- [{dependency}]({link}) - `{version}`")
+
 
     # Add generated-by text at the bottom
     lines.append("---\n")
     lines.append("Generated using [thejimbirch/dependgen](https://github.com/thejimbirch/dependgen).\n")
-    
+
     return "\n".join(lines).strip() + "\n"
 
 if __name__ == "__main__":
@@ -154,23 +137,14 @@ if __name__ == "__main__":
     all_dependencies = {}
     visited = set()
 
-    # Parse dependencies recursively
-    if "gitlab.com" in repo_url:
-        platform = "gitlab"
-    elif "git.drupalcode.org" in repo_url:
-        platform = "drupalcode"
-    else:
-        platform = "github"
+    platform = "gitlab" if "gitlab.com" in repo_url else "drupalcode" if "git.drupalcode.org" in repo_url else "github"
 
     parse_dependencies(repo_name, repo_url, branch, all_dependencies, visited, platform)
 
-    # Generate mermaid.js chart
     mermaid_chart = generate_mermaid_chart(all_dependencies)
 
-    # Generate combined markdown content
     combined_markdown = generate_combined_markdown(repo_name, mermaid_chart, all_dependencies)
 
-    # Save the combined markdown file
     with open("DEPENDENCIES.md", "w") as file:
         file.write(combined_markdown)
 
